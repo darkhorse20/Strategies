@@ -52,6 +52,8 @@ getSymbols(c(symb1, symb2), from=startDate, to=endDate, adjust=TRUE)
 currency("USD")
 
 alignSymbols <- function(symbols, env=.GlobalEnv) {
+# natual join those symbols. When joining them, they will cut off those data so that
+# they can have the same record length
   if (length(symbols) < 2) 
     stop("Must provide at least 2 symbols")
   if (any(!is.character(symbols))) 
@@ -59,10 +61,19 @@ alignSymbols <- function(symbols, env=.GlobalEnv) {
   ff <- get(symbols[1],env=env)
   for (sym in symbols[-1]) {
     tmp.sym <- get(sym,env=env)
+    #the default value of all = FALSE gives a natural join, a special case of an inner 
+    #join. Specifying all.x = TRUE gives a left (outer) join, all.y = TRUE a right 
+    #(outer) join, and both (all = TRUE a (full) outer join. DBMSes do not match NULL 
+    #records, equivalent to incomparables = NA in R.
     ff <- merge(ff,tmp.sym,all=FALSE)
   }
   for (sym in symbols) {
     assign(sym,ff[,grep(sym,colnames(ff))],env=env)
+    # grep search for matches to argument pattern within each element of a character vector
+    # the sym is the pattern which is a regular expression to be matched in x which is 
+    # colnames(ff) in this case
+    
+    # assign function is to assign the ff[,columns belongs to sym] into sym
   }
   symbols
 }
@@ -70,7 +81,10 @@ alignSymbols <- function(symbols, env=.GlobalEnv) {
 alignSymbols(c(symb1,symb2)) 
 
 stock(symb1, currency="USD", multiplier=1)
+# primary_id(in this case symb1):String describing the unique ID for the instrument.
+# Most of the wrappers allow this to be a vector.
 stock(symb2, currency="USD", multiplier=1)
+# stock: creat the financial instrument.
 
 initEq = 10000
 
@@ -78,8 +92,14 @@ initEq = 10000
 
 #Initialize Portfolio, Account, and Orders
 initPortf(name=portfolio1.st, c(symb1,symb2), initDate=initDate)
+#Constructs and initializes a portfolio object, which is used to contain transactions, 
+#positions, and aggregate level values.
+
+# the second parameter should pass stock into it to initialize the portfolio
 initAcct(account.st, portfolios=portfolio1.st, initDate=initDate, initEq=initEq)
 initOrders(portfolio=portfolio1.st,initDate=initDate)
+# Create initial position limits and levels by symbol
+# allow 3 entries for long and short if lvls=3.
 
 MaxPos = 1500  #max position in stockA; 
 #max position in stock B will be max * ratio, i.e. no hard position limit in Stock B
@@ -89,6 +109,10 @@ lvls = 3  #how many times to fade; Each order's qty will = MaxPos/lvls
 # allow 3 entries for long and short if lvls=3.
 addPosLimit(portfolio=portfolio1.st, timestamp=initDate, symbol=symb1, maxpos=MaxPos, longlevels=lvls, minpos=-MaxPos, shortlevels=lvls)
 addPosLimit(portfolio=portfolio1.st, timestamp=initDate, symbol=symb2, maxpos=MaxPos, longlevels=lvls, minpos=-MaxPos, shortlevels=lvls)
+
+# position limits: Many strategies will not be allowed to trade unconstrained. Typically, 
+#constraints will include position sizing limits.
+# addPosLimit("pair1","JPM",timestamp=initDate,maxpos=100, minpos=0)
 
 #position limits
 # addPosLimit("pair1","JPM",timestamp=initDate,maxpos=100, minpos=0)
@@ -102,7 +126,9 @@ autoregressor1  = function(x){
   
   if(NROW(x)<60){ result = NA} else{
     y = ROC(x$JPM.Close, type="discrete")
+    #Calculate the (rate of) change of a series over n periods(default as 1 period)
     y = na.omit(y)
+    # will omit the whole line if there is a na value in any column of that line.
 
     y1 = ROC(x$XLF.Close, type="discrete")
     y1 = na.omit(y1)
@@ -111,6 +137,8 @@ autoregressor1  = function(x){
     res <- lin_reg$residuals
     
     alpha <- (lin_reg$coefficients)[1]*252
+    # intercetion devide by time interval which is 1 in this case and multiply the 252 which
+    # gives the one year excess rate of return relative to the other asset
     
 #     ar1 <- ar.ols(res, aic = FALSE, order.max=1 )
 #     ar_coeff = ar1$ar
@@ -159,7 +187,9 @@ autoregressor1  = function(x){
 autoregressor = function(x){
   ans = rollapply(x,N,FUN = autoregressor1,by.column=FALSE)
   return (ans)}
-
+# just a function and there is no N define above
+ #by.column: logical. If TRUE, FUN is applied to each column separately
+  
 ########################indicators#############################
 
 arbstrat<-add.indicator(
@@ -214,6 +244,13 @@ arbstrat<-add.signal(
 ######################################## Rules #################################################
 
 #Entry Rule Long
+
+# ruleSignal:As described elsewhere in the documentation, quantstrat models orders. 
+#This function is the default provided rule function to generate those orders, 
+#which will be acted on later as they interact with your market data. 
+
+# column name to chek for signal as before it will generate an column by the add.signal function
+
 arbstrat<- add.rule(arbstrat,
                        name				=	"ruleSignal",
                        arguments			=	list(
