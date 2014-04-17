@@ -116,13 +116,32 @@ autoregressor1  = function(x){
 #     ar_coeff = ar1$ar
 #     ar_resids <- ar1$resid
 
-    ar1 <- arima(cumsum(res), order=c(1,0,0) )
-    b = ar1$coef[1]
-    ar_resids <- ar1$residuals
-    a = ar1$coef[2]
-    
+    # I would suggest to use use the linear regression. since there if we want 
+    # the arima model to include the intercept then we have to set the 
+    # 'include.mean' option to TURE in which case it will make the independence variable minus 
+    # their mean (quote from function indication:  Further, if include.mean is true (the default for an ARMA model), this formula applies to X - m rather than X)
+
+    # So I would suggest to use linear regression. 
+    #ar1 <- arima(cumsum(res), order=c(1,0,0) )
+    X.lm = lm(cumsum(res)[-length(cumsum(res))]~cumsum(res)[-1])
+    #b = ar1$coef[1]
+    b = X.lm$coef[2]
+    #ar_resids <- ar1$residuals
+    ar_resids<- X.lm$res
+    #a = ar1$coef[2]
+    a = X.lm$coef[1]
     rvar <- var(ar_resids)
     kappa <- -log(b)*252
+    
+
+    
+    
+    kappa = -log(X.lm$coef[2])*252
+    m = X.lm$coef[1]/(1-X.lm$coef[2])
+    rvar <- var(X.lm$res)
+    sigma <- sqrt(rvar*2*kappa/(1-X.lm$coef[2]^2))
+    sigma_eq <- sqrt(rvar/(1-X.lm$coef[2]^2))
+    
     
     cat('k: ', kappa, '\n')
     
