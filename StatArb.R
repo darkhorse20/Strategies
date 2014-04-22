@@ -105,6 +105,11 @@ MaxPos = 1500  #max position in stockA;
 #max position in stock B will be max * ratio, i.e. no hard position limit in Stock B
 lvls = 3  #how many times to fade; Each order's qty will = MaxPos/lvls
 
+pair <- c(1,2,MaxPos,lvls)
+names(pair) <- c(symb1,symb2,"MaxPos","lvls")
+
+.blotter[[paste('portfolio',portfolio1.st,sep='.')]]$pair <- pair
+
 # Create initial position limits and levels by symbol
 # allow 3 entries for long and short if lvls=3.
 addPosLimit(portfolio=portfolio1.st, timestamp=initDate, symbol=symb1, maxpos=MaxPos, longlevels=lvls, minpos=-MaxPos, shortlevels=lvls)
@@ -121,6 +126,52 @@ addPosLimit(portfolio=portfolio1.st, timestamp=initDate, symbol=symb2, maxpos=Ma
 arbstrat<-strategy("pairStrat", mktdata = merge(get(symb1), get(symb2)))
 
 ##############################FUNCTIONS#################################
+getHedgeRatio <- function(data, timestamp) {
+#   portf <- getPortfolio(portfolio)
+  timestamp <- format(timestamp,"%Y-%m-%d %H:%M:%S") #ensures you don't get last value of next day if using intraday data and timestamp=midnight
+  toDate <- paste("::", timestamp, sep="")
+  Ratio <- last(data$X1.regr[toDate])
+  as.numeric(Ratio)
+}
+
+osSpreadMaxPos <- function (data, timestamp, orderqty, ordertype, orderside, portfolio, symbol, ruletype, ..., orderprice) 
+{
+  portf <- getPortfolio(portfolio)
+  #check to make sure pair slot has the things needed for this function
+  if (!any(portf$pair == 1) && !(any(portf$pair == 2))) stop('pair must contain both values 1 and 2')
+  if (!any(names(portf$pair) == "MaxPos") || !any(names(portf$pair) == "lvls")) stop('pair must contain MaxPos and lvls')  
+  
+  if (portf$pair[symbol] == 1) legside <- "long"
+  if (portf$pair[symbol] == 2) legside <- "short"	
+  MaxPos <- portf$pair["MaxPos"]
+  lvls <- portf$pair["lvls"]
+  ratio <- getHedgeRatio(data, timestamp)
+  pos <- getPosQty(portfolio, symbol, timestamp) 	    
+  PosLimit <- getPosLimit(portfolio, symbol, timestamp) 
+  qty <- orderqty
+  
+  if (legside == "short") {#symbol is 2nd leg
+    
+    addPosLimit(portfolio=portfolio, timestamp=timestamp, symbol=symbol, maxpos=round(MaxPos*ratio,0), longlevels=lvls, minpos=round(-MaxPos*ratio,0), shortlevels=lvls)
+    ## 
+    qty <- -orderqty #switch orderqty for Stock B
+  }
+  
+  if (qty > 0) orderside = 'long'
+  if (qty < 0) orderside = 'short'
+  
+  orderqty <- osMaxPos(data=data,timestamp=timestamp,orderqty=qty,ordertype=ordertype,
+                       orderside=orderside,portfolio=portfolio,symbol=symbol,ruletype=ruletype, ...)
+  
+  #Add the order here instead of in the ruleSignal function
+  if (!is.null(orderqty) & !orderqty == 0 & !is.null(orderprice)) {
+    addOrder(portfolio = portfolio, symbol = symbol, 
+             timestamp = timestamp, qty = orderqty, price = as.numeric(orderprice), 
+             ordertype = ordertype, side = orderside, replace = FALSE,
+             status = "open", ... = ...)
+  }
+  return(0) #so that ruleSignal function doesn't also try to place an order
+}
 
 autoregressor1  = function(x){
   
@@ -137,6 +188,8 @@ autoregressor1  = function(x){
     res <- lin_reg$residuals
     
     alpha <- (lin_reg$coefficients)[1]*252
+    beta <- (lin_reg$coefficients)[2]
+    
     # intercetion devide by time interval which is 1 in this case and multiply the 252 which
     # gives the one year excess rate of return relative to the other asset
     
@@ -180,8 +233,11 @@ autoregressor1  = function(x){
     result <- -1*m/sigma_eq
     cat('s-score : ', result, '\n')
   }
+
+  results <- cbind(beta, result)
+  colnames(results) <- c("beta","sscore")
   
-  return(result)
+  return(results)
 }
 
 autoregressor = function(x){
@@ -197,7 +253,7 @@ arbstrat<-add.indicator(
   name		=	"autoregressor", 
   arguments	=	list(
     x		=	quote(merge(get(symb1), get(symb2)))),
-  label		=	"sscore")
+  label		=	"regr")
 
 ################################################ Signals #############################
 
@@ -206,8 +262,8 @@ arbstrat<-add.signal(
   name				= "sigThreshold",
   arguments			= list(
     threshold		= 1.25,
-    column			= "sscore",
-    relationship	= "gte",
+    column			= "X2.regr",
+    relationship	= "gt",
     cross			= TRUE),
   label				= "Selltime")
 
@@ -215,8 +271,8 @@ arbstrat<-add.signal(
   strategy			= arbstrat,
   name				= "sigThreshold",
   arguments			= list(
-    threshold		= 0.1,
-    column			= "sscore",
+    threshold		= 0.75,
+    column			= "X2.regr",
     relationship	= "lt",
     cross			= TRUE),
   label				= "cashtime")
@@ -225,8 +281,8 @@ arbstrat<-add.signal(
   strategy  		= arbstrat,
   name				= "sigThreshold",
   arguments			= list(
-    threshold		= -0.25,
-    column			= "sscore",
+    threshold		= -0.50,
+    column			= "X2.regr",
     relationship	= "gt",
     cross			= TRUE),
   label				= "cashtime")
@@ -236,8 +292,8 @@ arbstrat<-add.signal(
   name				= "sigThreshold",
   arguments			= list(
     threshold		= -1.25,
-    column			= "sscore",
-    relationship	= "lte",
+    column			= "X2.regr",
+    relationship	= "lt",
     cross			= TRUE),
   label				= "Buytime")
 
@@ -262,7 +318,7 @@ arbstrat<- add.rule(arbstrat,
                          pricemethod		=	"market",
                          replace			=	TRUE,
                          TxnFees				=	-1,
-                         osFUN				=	osMaxPos), 
+                         osFUN				=	osSpreadMaxPos), 
                        type				=	"enter",
                        path.dep			=	TRUE,
                        label				=	"Entry")
@@ -280,7 +336,7 @@ arbstrat<- add.rule(arbstrat,
                          pricemethod		=	"market",
                          replace			=	TRUE,
                          TxnFees				=	-1,
-                         osFUN				=	osMaxPos), 
+                         osFUN				=	osSpreadMaxPos), 
                        type				=	"enter",
                        path.dep			=	TRUE,
                        label				=	"Entry")
@@ -319,4 +375,4 @@ portRet$Total <- rowSums(portRet, na.rm=TRUE)
 charts.PerformanceSummary(portRet$Total)
 chart.Posn(portfolio1.st,"JPM")
 results1<-getTxns(portfolio1.st,"JPM")
-#plot(results1$Net.Txn.Realized.PL)
+plot(results1$Net.Txn.Realized.PL)
