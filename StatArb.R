@@ -137,12 +137,13 @@ getHedgeRatio <- function(data, timestamp) {
 osSpreadMaxPos <- function (data, timestamp, orderqty, ordertype, orderside, portfolio, symbol, ruletype, ..., orderprice) 
 {
   portf <- getPortfolio(portfolio)
-  #check to make sure pair slot has the things needed for this function
+  #Rules applied in sequence, i.e. symbol by symbol.
   if (!any(portf$pair == 1) && !(any(portf$pair == 2))) stop('pair must contain both values 1 and 2')
   if (!any(names(portf$pair) == "MaxPos") || !any(names(portf$pair) == "lvls")) stop('pair must contain MaxPos and lvls')  
   
   if (portf$pair[symbol] == 1) legside <- "long"
   if (portf$pair[symbol] == 2) legside <- "short"	
+  
   MaxPos <- portf$pair["MaxPos"]
   lvls <- portf$pair["lvls"]
   ratio <- getHedgeRatio(data, timestamp)
@@ -306,6 +307,25 @@ arbstrat<-add.signal(
 #which will be acted on later as they interact with your market data. 
 
 # column name to chek for signal as before it will generate an column by the add.signal function
+
+pairStrat <- add.rule(strategy = pairStrat, 
+                      name='ruleSignal', 
+                      arguments = list(sigcol="cross.dn", 
+                                       sigval=TRUE, 
+                                       orderqty=1e6, 
+                                       ordertype='market', 
+                                       orderside=NULL, 
+                                       osFUN='osSpreadMaxPos'), 
+                      type='enter' ) 
+pairStrat <- add.rule(strategy = pairStrat, 
+                      name='ruleSignal', 
+                      arguments = list(sigcol="cross.up", 
+                                       sigval=TRUE, 
+                                       orderqty=-1e6, 
+                                       ordertype='market', 
+                                       orderside=NULL, 
+                                       osFUN='osSpreadMaxPos'), 
+                      type='enter')
 
 arbstrat<- add.rule(arbstrat,
                        name				=	"ruleSignal",
